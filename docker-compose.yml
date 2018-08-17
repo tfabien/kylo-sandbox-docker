@@ -1,0 +1,90 @@
+version: '3'
+
+services:
+  database:
+    build: ./build/database
+    environment:
+      MYSQL_DATABASES: kylo,hive
+      MYSQL_ROOT_PASSWORD: kylo
+      MYSQL_USER: kylo
+      MYSQL_PASSWORD: kylo
+    networks:
+      - backoffice
+      
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.3.0
+    networks:
+      - backoffice
+    
+  activemq:
+    image: rmohr/activemq:5.15.4-alpine
+    environment:
+      VIRTUAL_HOST: kylo-activemq.frlprjr02.rec.fr.conforama.grp
+    networks:
+      - backoffice
+    
+  nifi:
+    build: ./build/nifi
+    volumes:
+      - ./build/nifi/nifi/config.properties:/opt/nifi/ext-config/config.properties
+      - ./build/kylo/lib-ext/sqljdbc42.jar:/opt/nifi/current/lib/sqljdbc42.jar
+    networks:
+      - frontoffice
+      - backoffice
+      - reverse-proxy
+    expose:
+      - 8079
+    environment:
+      VIRTUAL_HOST: kylo-nifi.mydomain
+  
+  kylo-services:
+    depends_on:
+      - database
+      - elasticsearch
+      - nifi
+    build: ./build/kylo
+    entrypoint: /entrypoint-kylo-services.sh
+    networks:
+      - backoffice
+    volumes:
+      - ./build/kylo/kylo-services/application.properties:/opt/kylo/kylo-services/conf/application.properties
+      - ./build/kylo/kylo-services/elasticsearch-rest.properties:/opt/kylo/kylo-services/conf/elasticsearch-rest.properties
+      - ./build/kylo/kylo-services/spark.properties:/opt/kylo/kylo-services/conf/spark.properties
+      - ./build/kylo/kylo-services/ambari.properties:/opt/kylo/kylo-services/conf/ambari.properties
+      - ./build/kylo/kylo-services/log4j.properties:/opt/kylo/kylo-services/conf/log4j.properties
+      - ./build/kylo/lib-ext/sqljdbc42.jar:/opt/kylo/kylo-services/lib/sqljdbc42.jar
+      - ./build/kylo/users.properties:/opt/kylo/users.properties
+      - ./build/kylo/groups.properties:/opt/kylo/groups.properties
+      
+  kylo-ui:
+    depends_on:
+      -  kylo-services
+    build: ./build/kylo
+    entrypoint: /entrypoint-kylo-ui.sh
+    networks:
+      - frontoffice
+      - backoffice
+      - reverse-proxy
+    expose:
+      - 8400
+    volumes:
+      - ./build/kylo/kylo-ui/application.properties:/opt/kylo/kylo-ui/conf/application.properties
+    environment:
+      VIRTUAL_HOST: kylo.mydomain
+
+  reverse-proxy:
+    image: jwilder/nginx-proxy:alpine
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+      - reverse-proxy
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      
+networks:
+  frontoffice:
+  backoffice:
+  reverse-proxy:
+    external:
+      name: reverse-proxy
