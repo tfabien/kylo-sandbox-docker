@@ -104,8 +104,6 @@ services:
       - reverse-proxy
     hostname: sandbox-hdp.hortonworks.com
     privileged: true
-    volumes:
-      - ./volumes/hdp-sandbox/yum.conf:/etc/yum.conf
     environment:
       VIRTUAL_HOST: ambari.sandbox.kylo.io
       VIRTUAL_PORT: 8080
@@ -133,5 +131,3 @@ networks:
   frontoffice:
   backoffice:
   reverse-proxy:
-    external:
-      name: reverse-proxy
