@@ -1,77 +1,117 @@
 version: '3'
 
 services:
-  database:
-    build: ./build/database
+
+  services:
+    image: 127.0.0.1:5000/kylo-master
+    build: ./build/kylo-master
+    entrypoint: /entrypoint-kylo-services.sh
+    networks:
+      - frontoffice
+      - backoffice
+      - reverse-proxy
+    volumes:
+      - ./volumes/services/application.properties:/opt/kylo/kylo-services/conf/application.properties
+      - ./volumes/services/elasticsearch-rest.properties:/opt/kylo/kylo-services/conf/elasticsearch-rest.properties
+      - ./volumes/services/spark.properties:/opt/kylo/kylo-services/conf/spark.properties
+      - ./volumes/services/ambari.properties:/opt/kylo/kylo-services/conf/ambari.properties
+      - ./volumes/services/users.properties:/opt/kylo/users.properties
+      - ./volumes/services/groups.properties:/opt/kylo/groups.properties
+      - ./volumes/services/advanced_ingest.template.zip:/opt/kylo/setup/data/templates/advanced_ingest.template.zip
+      - ./volumes/services/streaming_ingest.template.zip:/opt/kylo/setup/data/templates/streaming_ingest.template.zip
+      - ./volumes/commons/lib-ext/sqljdbc42.jar:/opt/kylo/kylo-services/lib/sqljdbc42.jar
+      - ./volumes/commons/lib-ext/ifxjdbc-4.10.10.0.jar:/opt/kylo/kylo-services/lib/ifxjdbc-4.10.10.0.jar
+      - ./volumes/services/core-site.xml:/etc/hadoop/conf/core-site.xml
+
+  ui:
+    image: 127.0.0.1:5000/kylo-master
+    entrypoint: /entrypoint-kylo-ui.sh
+    networks:
+      - frontoffice
+      - backoffice
+      - reverse-proxy
+    volumes:
+      - ./volumes/ui/application.properties:/opt/kylo/kylo-ui/conf/application.properties
+      - ./volumes/services/users.properties:/opt/kylo/users.properties
+      - ./volumes/services/groups.properties:/opt/kylo/groups.properties
     environment:
-      MYSQL_DATABASES: kylo,hive
+      VIRTUAL_HOST: ui.sandbox.kylo.io
+      VIRTUAL_PORT: 8400      
+
+  nifi:
+    image: 127.0.0.1:5000/kylo-master
+    entrypoint: /entrypoint-kylo-nifi.sh
+    volumes:
+      - ./volumes/nifi/config.properties:/opt/nifi/ext-config/config.properties
+      - ./volumes/commons/lib-ext/sqljdbc42.jar:/opt/nifi/current/lib/sqljdbc42.jar
+      - ./volumes/commons/lib-ext/ifxjdbc-4.10.10.0.jar:/opt/nifi/current/lib/ifxjdbc-4.10.10.0.jar
+    networks:
+      - frontoffice
+      - backoffice
+      - reverse-proxy
+    environment:
+      VIRTUAL_HOST: nifi.sandbox.kylo.io
+      VIRTUAL_PORT: 8079
+      
+  db:
+    image: mariadb
+    environment:
+      MYSQL_DATABASE: kylo
       MYSQL_ROOT_PASSWORD: kylo
       MYSQL_USER: kylo
       MYSQL_PASSWORD: kylo
     networks:
       - backoffice
       
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.3.0
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.4.0
     networks:
       - backoffice
     
-  activemq:
+  jms:
     image: rmohr/activemq:5.15.4-alpine
-    environment:
-      VIRTUAL_HOST: kylo-activemq.frlprjr02.rec.fr.conforama.grp
     networks:
       - backoffice
-    
-  nifi:
-    build: ./build/nifi
-    volumes:
-      - ./build/nifi/nifi/config.properties:/opt/nifi/ext-config/config.properties
-      - ./build/kylo/lib-ext/sqljdbc42.jar:/opt/nifi/current/lib/sqljdbc42.jar
-    networks:
-      - frontoffice
-      - backoffice
-      - reverse-proxy
-    expose:
-      - 8079
-    environment:
-      VIRTUAL_HOST: kylo-nifi.mydomain
-  
-  kylo-services:
-    depends_on:
-      - database
-      - elasticsearch
-      - nifi
-    build: ./build/kylo
-    entrypoint: /entrypoint-kylo-services.sh
-    networks:
-      - backoffice
-    volumes:
-      - ./build/kylo/kylo-services/application.properties:/opt/kylo/kylo-services/conf/application.properties
-      - ./build/kylo/kylo-services/elasticsearch-rest.properties:/opt/kylo/kylo-services/conf/elasticsearch-rest.properties
-      - ./build/kylo/kylo-services/spark.properties:/opt/kylo/kylo-services/conf/spark.properties
-      - ./build/kylo/kylo-services/ambari.properties:/opt/kylo/kylo-services/conf/ambari.properties
-      - ./build/kylo/kylo-services/log4j.properties:/opt/kylo/kylo-services/conf/log4j.properties
-      - ./build/kylo/lib-ext/sqljdbc42.jar:/opt/kylo/kylo-services/lib/sqljdbc42.jar
-      - ./build/kylo/users.properties:/opt/kylo/users.properties
-      - ./build/kylo/groups.properties:/opt/kylo/groups.properties
       
-  kylo-ui:
+  init-es:
+    image: 127.0.0.1:5000/kylo-master
     depends_on:
-      -  kylo-services
-    build: ./build/kylo
-    entrypoint: /entrypoint-kylo-ui.sh
+      - es
+    deploy:
+      restart_policy:
+        condition: none
+    command: "/opt/wait-for-it/wait-for-it.sh -h es -p 9200 --strict --timeout=0 -- /opt/kylo/bin/create-kylo-indexes-es.sh es 9200 1 1"
     networks:
-      - frontoffice
+      - backoffice
+      
+  #init-templates:
+  #  image: 127.0.0.1:5000/kylo-master
+  #  depends_on:
+  #    - ui
+  #  deploy:
+  #    restart_policy:
+  #      condition: none
+  #  command: "/opt/wait-for-it/wait-for-it.sh -h ui -p 8400 --strict --timeout=0 -- /opt/kylo/setup/data/install-templates.sh ui 8400"
+  #  networks:
+  #    - backoffice
+  
+  hdp-sandbox:
+    image: hortonworks/sandbox-hdp:2.6.5
+    ports:
+      - 18080:8080
+    networks:
       - backoffice
       - reverse-proxy
-    expose:
-      - 8400
+    hostname: sandbox-hdp.hortonworks.com
+    privileged: true
     volumes:
-      - ./build/kylo/kylo-ui/application.properties:/opt/kylo/kylo-ui/conf/application.properties
+      - ./volumes/hdp-sandbox/yum.conf:/etc/yum.conf
     environment:
-      VIRTUAL_HOST: kylo.mydomain
-
+      VIRTUAL_HOST: ambari.sandbox.kylo.io
+      VIRTUAL_PORT: 8080
+    # Extra steps:
+    # - docker exec -it kylo_hdp-sandbox_1 ambari-admin-password-reset
+  
   reverse-proxy:
     image: jwilder/nginx-proxy:alpine
     ports:
@@ -80,8 +120,15 @@ services:
     networks:
       - reverse-proxy
     volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
-      
+      - /var/run/docker.sock:/tmp/docker.sock:r
+
+  registry:
+    image: registry
+    networks:
+      - default
+    ports:
+      - 5000:5000
+
 networks:
   frontoffice:
   backoffice:
